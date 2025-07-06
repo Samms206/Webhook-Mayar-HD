@@ -105,7 +105,8 @@ export default async function handler(req, res) {
         console.error('❌ Database update error:', updateError);
         return res.status(500).json({
           statusCode: 500,
-          messages: "Database update failed"
+          messages: "Database update failed",
+          error: updateError.message
         });
       }
 

@@ -1,4 +1,3 @@
-// Home page untuk webhook server
 // File: pages/index.js
 
 import { useState, useEffect } from 'react';
@@ -6,8 +5,14 @@ import { useState, useEffect } from 'react';
 export default function HomePage() {
   const [status, setStatus] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [origin, setOrigin] = useState('');
 
   useEffect(() => {
+    // Set window origin only on client
+    if (typeof window !== 'undefined') {
+      setOrigin(window.location.origin);
+    }
+
     // Test webhook endpoint saat page load
     const testWebhook = async () => {
       try {
@@ -45,13 +50,15 @@ export default function HomePage() {
       });
 
       const result = await response.json();
-      alert(`Webhook Test Result: ${JSON.stringify(result, null, 2)}`);
+      alert(`Webhook Test Result:\n${JSON.stringify(result, null, 2)}`);
     } catch (error) {
       alert(`Webhook Test Error: ${error.message}`);
     } finally {
       setIsLoading(false);
     }
   };
+
+  const webhookUrl = origin ? `${origin}/api/webhook` : 'Loading...';
 
   return (
     <div style={{ 
@@ -95,7 +102,7 @@ export default function HomePage() {
           display: 'block', 
           borderRadius: '4px' 
         }}>
-          {typeof window !== 'undefined' ? window.location.origin : 'https://your-app.vercel.app'}/api/webhook
+          {webhookUrl}
         </code>
         <p><small>Gunakan URL ini di Mayar dashboard untuk webhook settings</small></p>
       </div>
@@ -139,7 +146,7 @@ export default function HomePage() {
         margin: '20px 0' 
       }}>
         <h2>Mayar Configuration</h2>
-        <p><strong>Webhook URL:</strong> {typeof window !== 'undefined' ? window.location.origin : 'https://your-app.vercel.app'}/api/webhook</p>
+        <p><strong>Webhook URL:</strong> {webhookUrl}</p>
         <p><strong>Method:</strong> POST</p>
         <p><strong>Content-Type:</strong> application/json</p>
         <p><strong>Events:</strong> Purchase</p>
