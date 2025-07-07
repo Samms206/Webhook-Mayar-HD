@@ -1,11 +1,3 @@
-// ========================================
-// QUIZ APP - MAYAR WEBHOOK HANDLER
-// Next.js API Route for Mayar payment webhooks
-// 
-// CURRENT STATUS: ✅ PRODUCTION READY
-// URL: https://webhook-mayar-hd-u2cl.vercel.app/api/webhook
-// ========================================
-
 import { createClient } from '@supabase/supabase-js';
 import Cors from 'cors';
 
@@ -49,7 +41,7 @@ export default async function handler(req, res) {
 
   try {
     // ==========================================
-    // GET REQUEST - Status & Testing
+    // GET REQUEST - Status & Testing  
     // ==========================================
     if (req.method === 'GET') {
       console.log('✅ GET Request - Webhook status check');
@@ -59,50 +51,37 @@ export default async function handler(req, res) {
       return res.status(200).json({
         status: 'success',
         message: '🚀 Quiz App Mayar Webhook Handler - READY!',
-        version: '2.0.0',
+        version: '2.1.0',
         timestamp: new Date().toISOString(),
         framework: 'Next.js API Routes',
         webhook_url: webhookUrl,
         environment: process.env.NODE_ENV || 'production',
         
-        // Current production configuration
-        mayar_config: {
-          webhook_url: webhookUrl,
-          supported_events: ['payment.received'],
-          supported_methods: ['POST'],
-          format: 'Mayar Standard Format'
+        // Updated matching strategy
+        matching_strategy: {
+          primary: 'exact_amount_match',
+          fallback: 'email_and_timeframe_match',
+          zero_amount_handling: 'supported',
+          time_window: '30_minutes'
         },
         
-        // Test payload based on actual Vercel logs
-        test_payload: {
-          event: 'payment.received',
-          data: {
-            id: '5ad53d1e-19e3-4f45-b949-6fd4a4a05584',
-            transactionId: '5ad53d1e-19e3-4f45-b949-6fd4a4a05584',
-            status: 'SUCCESS',
-            transactionStatus: 'paid',
-            amount: 0,  // Supports zero amount for free quizzes
-            customerEmail: 'testingquiz@gmail.com',
-            customerName: 'Development'
+        supported_formats: {
+          production: {
+            event: 'payment.received',
+            required_fields: ['transactionId', 'status', 'customerEmail', 'amount'],
+          },
+          testing: {
+            event: 'testing',
+            required_fields: ['id', 'status', 'customerEmail', 'amount'],
           }
         },
         
-        // Integration instructions
-        instructions: {
-          'Mayar Dashboard Setup': `Configure webhook URL: ${webhookUrl}`,
-          'Event Type': 'payment.received',
-          'Method': 'POST',
-          'Content-Type': 'application/json',
-          'Testing': 'Send POST request with test_payload structure'
-        },
-        
-        // Database integration status
         database_status: {
           supabase_connected: !!(process.env.SUPABASE_SERVICE_ROLE_KEY),
           functions_available: [
             'find_payment_session()',
-            'process_mayar_payment()',
-            'cleanup_expired_payment_sessions()'
+            'find_payment_session_flexible()',
+            'process_mayar_payment()'
           ]
         }
       });
@@ -129,17 +108,27 @@ export default async function handler(req, res) {
       }
 
       // ==========================================
-      // STEP 2: Extract Mayar Data Fields  
+      // STEP 2: Extract Mayar Data Fields (FLEXIBLE)
       // ==========================================
-      const {
-        transactionId,
-        status,
-        transactionStatus,
-        amount,
-        customerEmail,
-        customerName,
-        id
-      } = data;
+      let transactionId, status, transactionStatus, amount, customerEmail, customerName, id;
+
+      if (data.transactionId) {
+        transactionId = data.transactionId;
+        status = data.status;
+        transactionStatus = data.transactionStatus;
+        amount = data.amount;
+        customerEmail = data.customerEmail;
+        customerName = data.customerName;
+        id = data.id;
+      } else if (data.id && !data.transactionId) {
+        transactionId = data.id;
+        status = data.status;
+        transactionStatus = data.status;
+        amount = data.amount;
+        customerEmail = data.customerEmail;
+        customerName = data.customerName;
+        id = data.id;
+      }
 
       console.log('📋 Extracted Mayar Fields:', {
         event,
@@ -149,7 +138,8 @@ export default async function handler(req, res) {
         amount: amount + ' (' + typeof amount + ')',
         customerEmail,
         customerName,
-        webhookId: id
+        webhookId: id,
+        detectedFormat: data.transactionId ? 'production' : 'testing'
       });
 
       // ==========================================
@@ -157,7 +147,7 @@ export default async function handler(req, res) {
       // ==========================================
       if (!transactionId || !status || !customerEmail || amount === undefined) {
         const missing = [];
-        if (!transactionId) missing.push('transactionId');
+        if (!transactionId) missing.push('transactionId/id');
         if (!status) missing.push('status');
         if (!customerEmail) missing.push('customerEmail');
         if (amount === undefined) missing.push('amount');
@@ -165,7 +155,8 @@ export default async function handler(req, res) {
         console.error('❌ Missing required fields:', missing);
         return res.status(400).json({ 
           statusCode: 400, 
-          messages: `Missing required fields: ${missing.join(', ')}` 
+          messages: `Missing required fields: ${missing.join(', ')}`,
+          available_fields: Object.keys(data)
         });
       }
 
@@ -178,11 +169,16 @@ export default async function handler(req, res) {
         status === 'paid'
       );
 
-      if (event !== 'payment.received') {
-        console.log('⏭️  Ignoring webhook - wrong event type:', event);
+      const isValidEvent = (
+        event === 'payment.received' || 
+        event === 'testing'
+      );
+
+      if (!isValidEvent) {
+        console.log('⏭️  Ignoring webhook - unsupported event type:', event);
         return res.status(200).json({ 
           statusCode: 200, 
-          messages: 'Webhook ignored - not a payment.received event' 
+          messages: `Webhook ignored - unsupported event type: ${event}` 
         });
       }
 
@@ -200,7 +196,7 @@ export default async function handler(req, res) {
       console.log('✅ Valid successful payment webhook confirmed');
 
       // ==========================================
-      // STEP 5: Process Amount (Support Zero)
+      // STEP 5: Process Amount
       // ==========================================
       const numericAmount = Number(amount) || 0;
       console.log('💰 Amount Processing:', { 
@@ -211,10 +207,13 @@ export default async function handler(req, res) {
       });
 
       // ==========================================
-      // STEP 6: Find Matching Payment Session
+      // STEP 6: Find Matching Payment Session (IMPROVED)
+      // Try exact match first, then flexible matching
       // ==========================================
       console.log('🔍 Searching for matching payment session...');
-      const { data: matchingSession, error: findError } = await supabase
+      
+      // Method 1: Exact amount match
+      let { data: matchingSession, error: findError } = await supabase
         .rpc('find_payment_session', {
           p_email: customerEmail,
           p_amount: numericAmount,
@@ -229,6 +228,34 @@ export default async function handler(req, res) {
         });
       }
 
+      // Method 2: If no exact match and amount is 0, try flexible matching
+      if ((!matchingSession || matchingSession.length === 0) && numericAmount === 0) {
+        console.log('🔄 Exact match failed, trying flexible matching for zero amount...');
+        
+        // Find recent session for this email regardless of amount
+        const { data: flexibleSession, error: flexibleError } = await supabase
+          .from('payment_sessions')
+          .select('*')
+          .eq('user_email', customerEmail)
+          .eq('status', 'pending')
+          .gte('created_at', new Date(Date.now() - 30 * 60 * 1000).toISOString())
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (!flexibleError && flexibleSession && flexibleSession.length > 0) {
+          console.log('✅ Found flexible match:', {
+            sessionId: flexibleSession[0].session_id,
+            expectedAmount: flexibleSession[0].expected_amount,
+            actualAmount: numericAmount,
+            reason: 'Zero amount payment - likely free quiz with promo/coupon'
+          });
+          matchingSession = flexibleSession;
+        }
+      }
+
+      // ==========================================
+      // STEP 7: Handle No Match Found
+      // ==========================================
       if (!matchingSession || matchingSession.length === 0) {
         console.error('❌ No matching payment session found for:', {
           customerEmail,
@@ -248,7 +275,18 @@ export default async function handler(req, res) {
         
         return res.status(404).json({ 
           statusCode: 404, 
-          messages: 'No matching payment session found' 
+          messages: 'No matching payment session found',
+          debug_info: {
+            searched_email: customerEmail,
+            searched_amount: numericAmount,
+            recent_sessions: debugSessions || [],
+            suggestions: [
+              'Check if payment session was created correctly',
+              'Verify email match between session and webhook',
+              'Check if session is not expired (30 min window)',
+              'For zero amount: verify this is intended (free quiz)'
+            ]
+          }
         });
       }
 
@@ -258,11 +296,13 @@ export default async function handler(req, res) {
         userId: session.user_id,
         categoryId: session.category_id,
         expectedAmount: session.expected_amount,
-        status: session.status
+        actualAmount: numericAmount,
+        status: session.status,
+        matchType: session.expected_amount === numericAmount ? 'exact' : 'flexible'
       });
 
       // ==========================================
-      // STEP 7: Process Payment & Grant Access
+      // STEP 8: Process Payment & Grant Access
       // ==========================================
       console.log('💳 Processing payment and granting access...');
       const { data: paymentResult, error: processError } = await supabase
@@ -276,7 +316,8 @@ export default async function handler(req, res) {
         console.error('❌ Payment processing failed:', processError);
         return res.status(500).json({ 
           statusCode: 500, 
-          messages: 'Payment processing failed' 
+          messages: 'Payment processing failed',
+          error_details: processError.message
         });
       }
 
@@ -284,11 +325,18 @@ export default async function handler(req, res) {
       console.log('📊 Payment Result:', paymentResult);
 
       // ==========================================
-      // STEP 8: Success Response
-      // ==========================================
+      // STEP 9: Success Response
+      // ==========================================  
       return res.status(200).json({ 
         statusCode: 200, 
         messages: 'success',
+        webhook_info: {
+          event_type: event,
+          format_detected: data.transactionId ? 'production' : 'testing',
+          transaction_id: transactionId,
+          amount: numericAmount,
+          match_type: session.expected_amount === numericAmount ? 'exact_amount' : 'flexible_email_time'
+        },
         data: {
           session_id: session.session_id,
           transaction_id: paymentResult?.transaction_id,
@@ -319,7 +367,8 @@ export default async function handler(req, res) {
     
     return res.status(500).json({ 
       statusCode: 500, 
-      messages: 'Internal server error during webhook processing' 
+      messages: 'Internal server error during webhook processing',
+      error_info: error.message
     });
   }
 }
