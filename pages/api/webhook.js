@@ -1,6 +1,6 @@
 // ========================================
-// QUIZ APP - MAYAR WEBHOOK HANDLER (NEXT.JS)
-// Enhanced logic untuk handle TESFREE coupon testing + normal payments
+// QUIZ APP - MAYAR WEBHOOK HANDLER (FIXED)
+// Fixed logic untuk handle recently expired sessions
 // ========================================
 
 import { supabase } from '../../services/supabase.js';
@@ -33,24 +33,21 @@ export default async function handler(req, res) {
     return res.status(200).json({
       status: 'Webhook endpoint active',
       framework: 'Next.js',
-      version: '3.1.0-tesfree-support',
+      version: '3.2.0-expired-session-fix',
       timestamp: timestamp,
       webhook_url: `${req.headers.host}/api/webhook`,
       matching_strategy: {
         primary: 'exact_amount_and_email',
         secondary: 'flexible_email_time_window',
-        testing_coupon: 'TESFREE_support',
-        normal_payment: 'full_amount_support'
+        expired_session_handling: 'recent_expired_sessions_included',
+        coupon_support: 'TESFREE_and_general_coupons'
       },
       supported_scenarios: [
         'normal_payment_50000',
         'tesfree_coupon_0',
+        'recently_expired_sessions',
         'other_discounts',
         'free_quiz_native'
-      ],
-      supported_events: [
-        'payment.received',
-        'testing'
       ]
     });
   }
@@ -59,8 +56,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ 
       error: 'Method not allowed',
-      message: 'Only POST requests are allowed for webhook processing',
-      allowed_methods: ['GET', 'POST', 'OPTIONS']
+      message: 'Only POST requests are allowed for webhook processing'
     });
   }
 
@@ -76,8 +72,7 @@ export default async function handler(req, res) {
       return res.status(400).json({
         success: false,
         error: 'Invalid webhook payload',
-        message: 'Missing required fields: event, data',
-        received: { event: !!event, data: !!data }
+        message: 'Missing required fields: event, data'
       });
     }
 
@@ -127,8 +122,7 @@ export default async function handler(req, res) {
         success: false,
         message: 'Webhook received but not a successful payment event',
         processed: false,
-        data: mayarData,
-        reason: 'Not a successful payment'
+        data: mayarData
       });
     }
 
@@ -141,6 +135,7 @@ export default async function handler(req, res) {
     const isZeroAmount = numericAmount === 0;
     const isTestFreeCoupon = mayarData.couponUsed === 'TESFREE';
     const isNormalPayment = numericAmount > 0 && !mayarData.couponUsed;
+    const isPossibleCouponDiscount = isZeroAmount && !isTestFreeCoupon; // Could be any coupon
     
     console.log('💰 Payment Scenario Analysis:', {
       originalAmount: mayarData.amount,
@@ -149,13 +144,15 @@ export default async function handler(req, res) {
       couponUsed: mayarData.couponUsed,
       isTestFreeCoupon: isTestFreeCoupon,
       isNormalPayment: isNormalPayment,
+      isPossibleCouponDiscount: isPossibleCouponDiscount,
       scenario: isTestFreeCoupon ? 'TESFREE_TESTING' : 
                 isNormalPayment ? 'NORMAL_PAYMENT' : 
+                isPossibleCouponDiscount ? 'POSSIBLE_COUPON_DISCOUNT' :
                 isZeroAmount ? 'FREE_OR_DISCOUNT' : 'OTHER'
     });
 
     // ==========================================
-    // ENHANCED PAYMENT SESSION MATCHING
+    // ENHANCED PAYMENT SESSION MATCHING (FIXED)
     // ==========================================
     console.log('🔍 Starting enhanced payment session matching...');
 
@@ -163,8 +160,8 @@ export default async function handler(req, res) {
     let matchingMethod = 'none';
     let searchAttempts = [];
 
-    // ATTEMPT 1: Exact matching (email + amount)
-    console.log('🎯 Attempt 1: Exact email + amount matching...');
+    // ATTEMPT 1: Exact matching (email + amount) - PENDING SESSIONS ONLY
+    console.log('🎯 Attempt 1: Exact email + amount matching (pending sessions)...');
     try {
       const { data: exactMatches, error: exactError } = await supabase
         .from('payment_sessions')
@@ -176,75 +173,113 @@ export default async function handler(req, res) {
         .limit(3);
 
       searchAttempts.push({
-        method: 'exact_match',
-        criteria: { email: mayarData.customerEmail, amount: numericAmount },
+        method: 'exact_match_pending',
+        criteria: { email: mayarData.customerEmail, amount: numericAmount, status: 'pending' },
         results: exactMatches?.length || 0,
         error: exactError?.message || null
       });
 
-      if (exactError) {
-        console.error('❌ Error in exact match query:', exactError);
-      } else if (exactMatches && exactMatches.length > 0) {
-        matchingSession = exactMatches[0]; // Most recent exact match
-        matchingMethod = 'exact_match';
-        console.log('✅ Exact match found!', {
-          sessionId: matchingSession.session_id,
-          expectedAmount: matchingSession.expected_amount,
-          createdAt: matchingSession.created_at
-        });
+      if (exactMatches && exactMatches.length > 0) {
+        matchingSession = exactMatches[0];
+        matchingMethod = 'exact_match_pending';
+        console.log('✅ Exact match (pending) found!');
       }
     } catch (error) {
       console.error('❌ Exact match attempt failed:', error);
     }
 
-    // ATTEMPT 2: Flexible matching untuk TESFREE scenario (email + time window)
-    if (!matchingSession && isTestFreeCoupon) {
-      console.log('🎯 Attempt 2: TESFREE flexible matching (email + time window)...');
+    // ATTEMPT 2: FLEXIBLE MATCHING FOR ZERO AMOUNT (INCLUDING RECENTLY EXPIRED)
+    if (!matchingSession && isZeroAmount) {
+      console.log('🎯 Attempt 2: Zero amount flexible matching (including recently expired)...');
       
       try {
-        // Cari session dalam 1 jam terakhir dengan email yang sama
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        // Extended time window: 2 hours, include expired sessions
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
         
         const { data: flexibleMatches, error: flexibleError } = await supabase
           .from('payment_sessions')
           .select('*')
           .eq('user_email', mayarData.customerEmail)
-          .eq('status', 'pending')
-          .gte('created_at', oneHourAgo)
+          .in('status', ['pending', 'expired']) // Include expired sessions!
+          .gte('created_at', twoHoursAgo)
           .order('created_at', { ascending: false })
-          .limit(5);
+          .limit(10);
 
         searchAttempts.push({
-          method: 'tesfree_flexible',
-          criteria: { email: mayarData.customerEmail, timeWindow: '1 hour' },
+          method: 'zero_amount_flexible',
+          criteria: { 
+            email: mayarData.customerEmail, 
+            timeWindow: '2 hours',
+            statuses: ['pending', 'expired'],
+            amount: 'zero_amount'
+          },
           results: flexibleMatches?.length || 0,
           error: flexibleError?.message || null
         });
 
-        if (flexibleError) {
-          console.error('❌ Error in TESFREE flexible match:', flexibleError);
-        } else if (flexibleMatches && flexibleMatches.length > 0) {
-          // Prioritas: session dengan expected_amount > 0 (paid quiz)
-          const paidSession = flexibleMatches.find(s => s.expected_amount > 0);
-          matchingSession = paidSession || flexibleMatches[0];
-          matchingMethod = 'tesfree_flexible';
+        if (flexibleMatches && flexibleMatches.length > 0) {
+          console.log('🔍 Found sessions for zero amount matching:', flexibleMatches.map(s => ({
+            sessionId: s.session_id,
+            expectedAmount: s.expected_amount,
+            status: s.status,
+            createdAt: s.created_at,
+            timeDiff: Math.round((Date.now() - new Date(s.created_at).getTime()) / 1000 / 60) + ' minutes ago'
+          })));
+
+          // Strategy: Find most recent session with expected_amount > 0 (paid quiz)
+          const paidSessions = flexibleMatches.filter(s => s.expected_amount > 0);
+          const mostRecentPaidSession = paidSessions[0]; // Already sorted by created_at desc
           
-          console.log('✅ TESFREE flexible match found!', {
-            sessionId: matchingSession.session_id,
-            expectedAmount: matchingSession.expected_amount,
-            actualAmount: numericAmount,
-            discount: matchingSession.expected_amount - numericAmount,
-            createdAt: matchingSession.created_at
-          });
+          if (mostRecentPaidSession) {
+            matchingSession = mostRecentPaidSession;
+            matchingMethod = 'zero_amount_coupon_discount';
+            
+            console.log('✅ Zero amount coupon discount match found!', {
+              sessionId: matchingSession.session_id,
+              originalAmount: matchingSession.expected_amount,
+              discountedAmount: numericAmount,
+              sessionStatus: matchingSession.status,
+              discount: '100%',
+              timeSinceCreation: Math.round((Date.now() - new Date(matchingSession.created_at).getTime()) / 1000 / 60) + ' minutes'
+            });
+          } else {
+            console.log('⚠️ No paid sessions found for zero amount matching');
+          }
         }
       } catch (error) {
-        console.error('❌ TESFREE flexible match attempt failed:', error);
+        console.error('❌ Zero amount flexible match failed:', error);
       }
     }
 
-    // ATTEMPT 3: General flexible matching (email + recent time)
+    // ATTEMPT 3: TESFREE SPECIFIC MATCHING
+    if (!matchingSession && isTestFreeCoupon) {
+      console.log('🎯 Attempt 3: TESFREE specific matching...');
+      
+      try {
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        
+        const { data: testfreeMatches, error: testfreeError } = await supabase
+          .from('payment_sessions')
+          .select('*')
+          .eq('user_email', mayarData.customerEmail)
+          .in('status', ['pending', 'expired'])
+          .gte('created_at', oneHourAgo)
+          .order('created_at', { ascending: false })
+          .limit(5);
+
+        if (testfreeMatches && testfreeMatches.length > 0) {
+          matchingSession = testfreeMatches[0];
+          matchingMethod = 'tesfree_specific';
+          console.log('✅ TESFREE specific match found!');
+        }
+      } catch (error) {
+        console.error('❌ TESFREE specific match failed:', error);
+      }
+    }
+
+    // ATTEMPT 4: GENERAL FLEXIBLE MATCHING (RECENT SESSIONS)
     if (!matchingSession) {
-      console.log('🎯 Attempt 3: General flexible matching (email + 30min window)...');
+      console.log('🎯 Attempt 4: General flexible matching (recent sessions, any status)...');
       
       try {
         const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
@@ -253,27 +288,29 @@ export default async function handler(req, res) {
           .from('payment_sessions')
           .select('*')
           .eq('user_email', mayarData.customerEmail)
-          .eq('status', 'pending')
+          .in('status', ['pending', 'expired']) // Include expired!
           .gte('created_at', thirtyMinAgo)
           .order('created_at', { ascending: false })
-          .limit(3);
+          .limit(5);
 
         searchAttempts.push({
-          method: 'general_flexible',
-          criteria: { email: mayarData.customerEmail, timeWindow: '30 minutes' },
+          method: 'general_flexible_recent',
+          criteria: { 
+            email: mayarData.customerEmail, 
+            timeWindow: '30 minutes',
+            statuses: ['pending', 'expired']
+          },
           results: generalMatches?.length || 0,
           error: generalError?.message || null
         });
 
-        if (generalError) {
-          console.error('❌ Error in general flexible match:', generalError);
-        } else if (generalMatches && generalMatches.length > 0) {
+        if (generalMatches && generalMatches.length > 0) {
           matchingSession = generalMatches[0];
-          matchingMethod = 'general_flexible';
-          console.log('✅ General flexible match found!');
+          matchingMethod = 'general_flexible_recent';
+          console.log('✅ General flexible recent match found!');
         }
       } catch (error) {
-        console.error('❌ General flexible match attempt failed:', error);
+        console.error('❌ General flexible match failed:', error);
       }
     }
 
@@ -281,7 +318,7 @@ export default async function handler(req, res) {
     // HANDLE NO MATCHING SESSION FOUND
     // ==========================================
     if (!matchingSession) {
-      console.log('❌ No matching payment session found after all attempts');
+      console.log('❌ No matching payment session found after all enhanced attempts');
 
       // Get recent sessions for debugging
       try {
@@ -295,7 +332,7 @@ export default async function handler(req, res) {
 
         return res.status(200).json({
           success: false,
-          message: 'No matching payment session found',
+          message: 'No matching payment session found after enhanced attempts',
           processed: false,
           data: mayarData,
           debug: {
@@ -304,17 +341,21 @@ export default async function handler(req, res) {
               customerEmail: mayarData.customerEmail,
               amount: numericAmount,
               couponUsed: mayarData.couponUsed,
-              scenario: isTestFreeCoupon ? 'TESFREE_TESTING' : 'NORMAL_PAYMENT'
+              scenario: isPossibleCouponDiscount ? 'POSSIBLE_COUPON_DISCOUNT' : 'NORMAL_PAYMENT'
             },
-            recentSessions: debugSessions?.slice(0, 5)
+            recentSessions: debugSessions?.slice(0, 5),
+            recommendations: [
+              'Check if payment session was created recently',
+              'Verify email address matches exactly',
+              'Consider if this is a coupon discount scenario'
+            ]
           }
         });
       } catch (error) {
         console.error('❌ Error fetching debug sessions:', error);
         return res.status(500).json({
           success: false,
-          error: 'Database error during debugging',
-          message: error.message
+          error: 'Database error during debugging'
         });
       }
     }
@@ -328,16 +369,18 @@ export default async function handler(req, res) {
       categoryId: matchingSession.category_id,
       expectedAmount: matchingSession.expected_amount,
       actualAmount: numericAmount,
+      originalStatus: matchingSession.status,
       matchingMethod: matchingMethod,
       discount: matchingSession.expected_amount - numericAmount,
-      timeSinceCreation: `${Math.round((Date.now() - new Date(matchingSession.created_at).getTime()) / 1000 / 60)} minutes`
+      timeSinceCreation: Math.round((Date.now() - new Date(matchingSession.created_at).getTime()) / 1000 / 60) + ' minutes'
     });
 
     // Determine access type
     const accessType = numericAmount === 0 ? 'free' : 'paid';
 
-    // Grant quiz access using upsert for safety
+    // Grant quiz access
     try {
+      console.log('🔐 Granting quiz access...');
       const { error: accessError } = await supabase
         .from('user_quiz_access')
         .upsert({
@@ -345,7 +388,7 @@ export default async function handler(req, res) {
           category_id: matchingSession.category_id,
           access_type: accessType,
           granted_at: new Date().toISOString(),
-          expires_at: null // No expiration for quiz access
+          expires_at: null
         }, {
           onConflict: 'user_id,category_id'
         });
@@ -365,8 +408,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // Update payment session status
+    // Update payment session status to completed
     try {
+      console.log('📝 Updating payment session status...');
       const { error: updateError } = await supabase
         .from('payment_sessions')
         .update({
@@ -381,16 +425,16 @@ export default async function handler(req, res) {
 
       if (updateError) {
         console.error('❌ Error updating session status:', updateError);
-        // Don't fail the entire process for this
       } else {
-        console.log('✅ Payment session status updated');
+        console.log('✅ Payment session status updated to completed');
       }
     } catch (error) {
       console.error('❌ Session update failed:', error);
     }
 
-    // Record transaction for history
+    // Record transaction
     try {
+      console.log('💾 Recording transaction...');
       const { error: transactionError } = await supabase
         .from('quiz_transactions')
         .insert({
@@ -410,7 +454,6 @@ export default async function handler(req, res) {
 
       if (transactionError) {
         console.error('❌ Error recording transaction:', transactionError);
-        // Don't fail for transaction recording error
       } else {
         console.log('✅ Transaction recorded successfully');
       }
@@ -443,7 +486,7 @@ export default async function handler(req, res) {
         discountPercentage: discountPercentage,
         accessType: accessType,
         couponUsed: mayarData.couponUsed,
-        isTestFreeCoupon: isTestFreeCoupon,
+        wasSessionExpired: matchingSession.status === 'expired',
         matchingMethod: matchingMethod,
         processedAt: new Date().toISOString()
       }
@@ -455,8 +498,7 @@ export default async function handler(req, res) {
       success: false,
       error: 'Internal server error',
       message: error.message,
-      processed: false,
-      timestamp: new Date().toISOString()
+      processed: false
     });
   }
 }
@@ -465,7 +507,7 @@ export default async function handler(req, res) {
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '2mb', // Increased for detailed webhook payloads
+      sizeLimit: '2mb',
     },
   },
 };

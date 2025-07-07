@@ -1,6 +1,6 @@
 // ========================================
-// QUIZ APP - PAYMENT SERVICE (NEXT.JS OPTIMIZED)
-// Enhanced untuk TESFREE testing + normal payments
+// QUIZ APP - PAYMENT SERVICE (FIXED EXPIRY)
+// Fixed session expiry time dan better session management
 // ========================================
 
 import { supabase } from './supabase.js';
@@ -8,7 +8,6 @@ import { supabase } from './supabase.js';
 // Helper function untuk generate UUID
 const generateUUID = () => {
   try {
-    // Try using crypto.randomUUID if available
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
       return crypto.randomUUID();
     }
@@ -16,7 +15,6 @@ const generateUUID = () => {
     console.log('⚠️ crypto.randomUUID not available, using fallback');
   }
   
-  // Fallback UUID generation
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     const r = Math.random() * 16 | 0;
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -24,7 +22,7 @@ const generateUUID = () => {
   });
 };
 
-// Create payment session - ENHANCED FOR TESFREE + NORMAL PAYMENTS
+// Create payment session - FIXED EXPIRY TIME
 export async function createPaymentSession({
   userId,
   categoryId,
@@ -88,9 +86,6 @@ export async function createPaymentSession({
     // ==========================================
     // DETERMINE PAYMENT AMOUNT & SESSION TYPE
     // ==========================================
-    
-    // For TESFREE testing: always create with normal price
-    // Users can apply TESFREE coupon during payment
     const isFreeQuiz = category.quiz_type === 'free' || category.price_amount === 0;
     const sessionAmount = isFreeQuiz ? 0 : category.price_amount;
     
@@ -98,13 +93,16 @@ export async function createPaymentSession({
       categoryType: category.quiz_type,
       categoryPrice: category.price_amount,
       sessionAmount: sessionAmount,
-      isFreeQuiz: isFreeQuiz,
-      note: 'TESFREE coupon can be applied during payment'
+      isFreeQuiz: isFreeQuiz
     });
 
     // ==========================================
-    // CREATE PAYMENT SESSION
+    // CREATE PAYMENT SESSION WITH LONGER EXPIRY
     // ==========================================
+    
+    // FIXED: Longer expiry time (4 hours instead of 1 hour)
+    const expiryTime = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+    
     try {
       const { data: session, error: sessionError } = await supabase
         .from('payment_sessions')
@@ -114,8 +112,9 @@ export async function createPaymentSession({
           category_id: categoryId,
           user_email: userEmail,
           expected_amount: sessionAmount,
-          expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour expiry
-          created_at: new Date().toISOString()
+          expires_at: expiryTime, // 4 hours expiry
+          created_at: new Date().toISOString(),
+          status: 'pending'
         })
         .select()
         .single();
@@ -128,7 +127,8 @@ export async function createPaymentSession({
       console.log('✅ Payment session created successfully:', {
         sessionId: session.session_id,
         expectedAmount: session.expected_amount,
-        expiresAt: session.expires_at
+        expiresAt: session.expires_at,
+        expiryInHours: '4 hours from now'
       });
 
       // ==========================================
@@ -145,7 +145,6 @@ export async function createPaymentSession({
       if (isFreeQuiz) {
         console.log('🆓 Free quiz detected - granting immediate access');
         
-        // Grant immediate access for free quiz
         const { error: freeAccessError } = await supabase
           .from('user_quiz_access')
           .insert({
@@ -158,10 +157,8 @@ export async function createPaymentSession({
 
         if (freeAccessError) {
           console.error('❌ Error granting free access:', freeAccessError);
-          // Don't throw error, session still created
         }
 
-        // Update session to completed for free quiz
         await supabase
           .from('payment_sessions')
           .update({ 
@@ -173,7 +170,7 @@ export async function createPaymentSession({
         return { 
           success: true,
           sessionId,
-          paymentUrl: null, // No payment needed
+          paymentUrl: null,
           categoryName: category.name,
           amount: 0,
           isFree: true,
@@ -195,10 +192,14 @@ export async function createPaymentSession({
         isFree: false,
         hasAccess: false,
         expiresAt: session.expires_at,
+        expiryInfo: {
+          expiresIn: '4 hours',
+          message: 'Session will remain active for 4 hours',
+          note: 'Plenty of time for payment completion'
+        },
         testingInfo: {
-          message: 'Use coupon TESFREE for testing (makes amount 0)',
-          normalFlow: 'Regular users pay full amount',
-          supportedCoupons: ['TESFREE']
+          message: 'Use any coupon for testing discounts',
+          normalFlow: 'Regular users pay full amount'
         }
       };
 
@@ -213,7 +214,7 @@ export async function createPaymentSession({
   }
 }
 
-// Check payment session status
+// Check payment session status - ENHANCED
 export async function checkPaymentSession(sessionId, userId = null) {
   try {
     console.log('🔍 Checking payment session:', { sessionId, userId });
@@ -222,7 +223,6 @@ export async function checkPaymentSession(sessionId, userId = null) {
       throw new Error('Session ID is required');
     }
 
-    // Get payment session from database
     const { data: session, error: sessionError } = await supabase
       .from('payment_sessions')
       .select('*')
@@ -234,21 +234,29 @@ export async function checkPaymentSession(sessionId, userId = null) {
       throw new Error('Payment session not found');
     }
 
-    // Optional: Check if session belongs to user
     if (userId && session.user_id !== userId) {
       console.error('❌ Unauthorized session access attempt');
       throw new Error('Unauthorized access to payment session');
     }
 
-    // Check if session is expired
+    // Enhanced expiry check
     const now = new Date();
     const expiresAt = new Date(session.expires_at);
     const isExpired = expiresAt < now;
+    const timeUntilExpiry = expiresAt.getTime() - now.getTime();
+    const minutesUntilExpiry = Math.round(timeUntilExpiry / 1000 / 60);
     
+    console.log('⏰ Session timing info:', {
+      status: session.status,
+      isExpired: isExpired,
+      minutesUntilExpiry: minutesUntilExpiry,
+      expiresAt: session.expires_at
+    });
+    
+    // Update expired status if needed
     if (isExpired && session.status === 'pending') {
       console.log('⏰ Session expired, updating status...');
       
-      // Update expired status
       await supabase
         .from('payment_sessions')
         .update({ 
@@ -260,7 +268,7 @@ export async function checkPaymentSession(sessionId, userId = null) {
       session.status = 'expired';
     }
 
-    // If payment is completed, check actual user access
+    // Check user access
     let hasAccess = false;
     if (session.status === 'completed') {
       const { data: accessData, error: accessError } = await supabase
@@ -285,6 +293,11 @@ export async function checkPaymentSession(sessionId, userId = null) {
       expiresAt: session.expires_at,
       processedAt: session.processed_at,
       hasAccess,
+      timingInfo: {
+        isExpired: isExpired,
+        minutesUntilExpiry: minutesUntilExpiry,
+        status: isExpired ? 'expired' : minutesUntilExpiry > 60 ? 'plenty_of_time' : 'expiring_soon'
+      },
       sessionInfo: {
         categoryId: session.category_id,
         expectedAmount: session.expected_amount,
@@ -301,7 +314,8 @@ export async function checkPaymentSession(sessionId, userId = null) {
     console.log('✅ Session check completed:', {
       sessionId,
       status: result.status,
-      hasAccess: result.hasAccess
+      hasAccess: result.hasAccess,
+      minutesUntilExpiry: minutesUntilExpiry
     });
 
     return result;
@@ -311,7 +325,7 @@ export async function checkPaymentSession(sessionId, userId = null) {
   }
 }
 
-// Check if user has access to a category
+// Other functions remain the same...
 export async function checkUserQuizAccess(userId, categoryId) {
   try {
     if (!userId || !categoryId) {
@@ -320,7 +334,6 @@ export async function checkUserQuizAccess(userId, categoryId) {
 
     console.log('🔍 Checking user quiz access:', { userId, categoryId });
 
-    // Check for both paid and free access
     const { data, error } = await supabase
       .from('user_quiz_access')
       .select('access_type, granted_at, expires_at')
@@ -348,7 +361,6 @@ export async function checkUserQuizAccess(userId, categoryId) {
   }
 }
 
-// Get user's payment history
 export async function getUserPaymentHistory(userId) {
   try {
     if (!userId) {
@@ -383,7 +395,6 @@ export async function getUserPaymentHistory(userId) {
   }
 }
 
-// Get active payment sessions for user
 export async function getUserActivePaymentSessions(userId) {
   try {
     if (!userId) {
@@ -420,7 +431,6 @@ export async function getUserActivePaymentSessions(userId) {
   }
 }
 
-// Clean up expired payment sessions (utility function)
 export async function cleanupExpiredPaymentSessions() {
   try {
     console.log('🧹 Cleaning up expired payment sessions...');
