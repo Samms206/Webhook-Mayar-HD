@@ -125,9 +125,9 @@ export default function Home() {
         
         <p><strong>Required Fields:</strong></p>
         <ul>
-          <li>event: "payment.received"</li>
+          <li>event: &quot;payment.received&quot;</li>
           <li>data.transactionId</li>
-          <li>data.status: "SUCCESS"</li>
+          <li>data.status: &quot;SUCCESS&quot;</li>
           <li>data.customerEmail</li>
           <li>data.amount (can be 0 for free)</li>
         </ul>
