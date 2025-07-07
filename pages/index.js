@@ -1,155 +1,176 @@
-// File: pages/index.js
+// ========================================
+// QUIZ APP - WEBHOOK MAYAR HOMEPAGE
+// Fixed hydration error version
+// ========================================
 
 import { useState, useEffect } from 'react';
 
-export default function HomePage() {
-  const [status, setStatus] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [origin, setOrigin] = useState('');
+export default function Home() {
+  const [webhookStatus, setWebhookStatus] = useState(null);
+  const [healthStatus, setHealthStatus] = useState(null);
+  const [webhookUrl, setWebhookUrl] = useState('');
 
   useEffect(() => {
-    // Set window origin only on client
+    // Set webhook URL on client only
     if (typeof window !== 'undefined') {
-      setOrigin(window.location.origin);
+      setWebhookUrl(`${window.location.origin}/api/webhook`);
     }
 
-    // Test webhook endpoint saat page load
-    const testWebhook = async () => {
-      try {
-        const response = await fetch('/api/webhook');
-        const data = await response.json();
-        setStatus(data);
-      } catch (error) {
-        setStatus({ status: 'error', message: error.message });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    testWebhook();
+    checkWebhookStatus();
+    checkHealthStatus();
   }, []);
 
-  const testWebhookPost = async () => {
+  const checkWebhookStatus = async () => {
     try {
-      setIsLoading(true);
+      const response = await fetch('/api/webhook');
+      const data = await response.json();
+      setWebhookStatus(data);
+    } catch (error) {
+      console.error('Failed to check webhook status:', error);
+    }
+  };
+
+  const checkHealthStatus = async () => {
+    try {
+      const response = await fetch('/api/health');
+      const data = await response.json();
+      setHealthStatus(data);
+    } catch (error) {
+      console.error('Failed to check health status:', error);
+    }
+  };
+
+  const testWebhook = async () => {
+    try {
       const testPayload = {
-        order_id: 'quiz_test_' + Date.now(),
-        status: 'paid',
-        amount: 50000,
-        customer_email: 'test@example.com',
-        customer_name: 'Test User',
-        webhook_history_id: 'test-' + Date.now()
+        event: 'payment.received',
+        data: {
+          id: 'test-' + Date.now(),
+          transactionId: 'test-tx-' + Date.now(),
+          status: 'SUCCESS',
+          transactionStatus: 'paid',
+          amount: 0,
+          customerEmail: 'test@example.com',
+          customerName: 'Test User'
+        }
       };
 
       const response = await fetch('/api/webhook', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(testPayload),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(testPayload)
       });
 
       const result = await response.json();
-      alert(`Webhook Test Result:\n${JSON.stringify(result, null, 2)}`);
+      alert(`Test Result: ${JSON.stringify(result, null, 2)}`);
     } catch (error) {
-      alert(`Webhook Test Error: ${error.message}`);
-    } finally {
-      setIsLoading(false);
+      alert(`Test Failed: ${error.message}`);
     }
   };
-
-  const webhookUrl = origin ? `${origin}/api/webhook` : 'Loading...';
 
   return (
     <div style={{ 
       fontFamily: 'Arial, sans-serif', 
       maxWidth: '800px', 
       margin: '0 auto', 
-      padding: '20px' 
+      padding: '20px',
+      lineHeight: '1.6'
     }}>
-      <h1>🔔 Mayar Webhook Server</h1>
-      <p>Next.js API untuk menangani webhook pembayaran Mayar</p>
-
+      <h1>🚀 Quiz App - Mayar Webhook Server</h1>
+      
       <div style={{ 
-        background: '#f5f5f5', 
-        padding: '20px', 
+        background: '#f0f8ff', 
+        padding: '15px', 
         borderRadius: '8px', 
-        margin: '20px 0' 
+        marginBottom: '20px' 
       }}>
-        <h2>Server Status</h2>
-        {isLoading ? (
-          <p>⏳ Loading...</p>
-        ) : (
+        <h2>📊 Server Status</h2>
+        
+        {webhookStatus && (
+          <div style={{ marginBottom: '15px' }}>
+            <h3>Webhook Endpoint</h3>
+            <p><strong>Status:</strong> {webhookStatus.status}</p>
+            <p><strong>Version:</strong> {webhookStatus.version}</p>
+            <p><strong>URL:</strong> <code>{webhookStatus.webhook_url}</code></p>
+          </div>
+        )}
+
+        {healthStatus && (
           <div>
-            <p><strong>Status:</strong> {status?.status}</p>
-            <p><strong>Message:</strong> {status?.message}</p>
-            <p><strong>Framework:</strong> {status?.framework}</p>
-            <p><strong>Timestamp:</strong> {status?.timestamp}</p>
+            <h3>Health Check</h3>
+            <p><strong>Status:</strong> {healthStatus.status}</p>
+            <p><strong>Database:</strong> {healthStatus.services?.database}</p>
+            <p><strong>Uptime:</strong> {healthStatus.system?.uptime}</p>
           </div>
         )}
       </div>
 
       <div style={{ 
-        background: '#e8f5e8', 
-        padding: '20px', 
+        background: '#fff5f5', 
+        padding: '15px', 
         borderRadius: '8px', 
-        margin: '20px 0' 
+        marginBottom: '20px' 
       }}>
-        <h2>Webhook URL</h2>
+        <h2>🔧 Configuration</h2>
+        <p><strong>Webhook URL for Mayar:</strong></p>
         <code style={{ 
-          background: 'white', 
-          padding: '10px', 
-          display: 'block', 
-          borderRadius: '4px' 
+          background: '#f0f0f0', 
+          padding: '8px', 
+          borderRadius: '4px', 
+          display: 'block',
+          margin: '10px 0'
         }}>
-          {webhookUrl}
+          {webhookUrl || '/api/webhook'}
         </code>
-        <p><small>Gunakan URL ini di Mayar dashboard untuk webhook settings</small></p>
-      </div>
-
-      <div style={{ margin: '20px 0' }}>
-        <h2>Test Webhook</h2>
-        <button 
-          onClick={testWebhookPost}
-          disabled={isLoading}
-          style={{
-            background: '#0070f3',
-            color: 'white',
-            border: 'none',
-            padding: '10px 20px',
-            borderRadius: '4px',
-            cursor: 'pointer'
-          }}
-        >
-          {isLoading ? '⏳ Testing...' : '🧪 Test POST Webhook'}
-        </button>
-      </div>
-
-      <div style={{ 
-        background: '#fff3cd', 
-        padding: '20px', 
-        borderRadius: '8px', 
-        margin: '20px 0' 
-      }}>
-        <h2>Endpoints</h2>
+        
+        <p><strong>Required Fields:</strong></p>
         <ul>
-          <li><strong>GET /api/webhook</strong> - Test endpoint status</li>
-          <li><strong>POST /api/webhook</strong> - Receive Mayar webhooks</li>
-          <li><strong>GET /api/health</strong> - Health check</li>
+          <li>event: "payment.received"</li>
+          <li>data.transactionId</li>
+          <li>data.status: "SUCCESS"</li>
+          <li>data.customerEmail</li>
+          <li>data.amount (can be 0 for free)</li>
         </ul>
       </div>
 
       <div style={{ 
-        background: '#f8d7da', 
-        padding: '20px', 
+        background: '#f0fff0', 
+        padding: '15px', 
         borderRadius: '8px', 
-        margin: '20px 0' 
+        marginBottom: '20px' 
       }}>
-        <h2>Mayar Configuration</h2>
-        <p><strong>Webhook URL:</strong> {webhookUrl}</p>
-        <p><strong>Method:</strong> POST</p>
-        <p><strong>Content-Type:</strong> application/json</p>
-        <p><strong>Events:</strong> Purchase</p>
+        <h2>🧪 Testing</h2>
+        <p>Test webhook dengan sample payload:</p>
+        <button 
+          onClick={testWebhook}
+          style={{
+            background: '#007bff',
+            color: 'white',
+            border: 'none',
+            padding: '10px 20px',
+            borderRadius: '5px',
+            cursor: 'pointer'
+          }}
+        >
+          Test Webhook
+        </button>
+      </div>
+
+      <div style={{ 
+        background: '#fffaf0', 
+        padding: '15px', 
+        borderRadius: '8px' 
+      }}>
+        <h2>📝 API Documentation</h2>
+        <p><strong>GET /api/webhook</strong> - Status check dan test payload</p>
+        <p><strong>POST /api/webhook</strong> - Process Mayar payment webhooks</p>
+        <p><strong>GET /api/health</strong> - Health check dan system info</p>
+        
+        <p style={{ marginTop: '20px' }}>
+          <strong>Repository:</strong> Quiz App Webhook Mayar<br/>
+          <strong>Framework:</strong> Next.js<br/>
+          <strong>Deploy:</strong> Vercel
+        </p>
       </div>
     </div>
   );

@@ -1,88 +1,99 @@
-// File: pages/api/webhook.js
+// ========================================
+// QUIZ APP - HEALTH CHECK ENDPOINT
+// Simple health check for monitoring webhook server
+// ========================================
+
 import { createClient } from '@supabase/supabase-js';
 
+// Initialize Supabase client for health check
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// CORS headers
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
 export default async function handler(req, res) {
-  Object.entries(corsHeaders).forEach(([key, val]) => res.setHeader(key, val));
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  const timestamp = new Date().toISOString();
+  
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
-  if (req.method === 'GET') {
-    return res.status(200).json({
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      endpoint: '/api/webhook',
+  // Only allow GET requests
+  if (req.method !== 'GET') {
+    return res.status(405).json({
+      status: 'error',
+      message: 'Method not allowed'
     });
   }
 
-  if (req.method === 'POST') {
-    const webhookData = req.body;
-    const { order_id, status } = webhookData;
+  try {
+    // Test database connection
+    const { data, error } = await supabase
+      .from('payment_sessions')
+      .select('count')
+      .limit(1);
 
-    if (!order_id || !status) {
-      return res.status(400).json({ statusCode: 400, messages: 'Missing required fields' });
-    }
-
-    try {
-      const { data: payment, error: updateError } = await supabase
-        .from('payments')
-        .update({
-          status,
-          paid_at: status === 'paid' ? new Date().toISOString() : null,
-          webhook_data: webhookData,
-          webhook_received_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('order_id', order_id)
-        .select()
-        .single();
-
-      if (updateError) throw updateError;
-
-      if (status === 'paid' && payment) {
-        await supabase.from('user_purchases').upsert({
-          user_id: payment.user_id,
-          quiz_id: payment.quiz_id,
-          order_id: payment.order_id,
-          purchased_at: new Date().toISOString(),
-          is_active: true,
-          amount_paid: payment.amount,
-          currency: payment.currency || 'IDR',
-        });
+    const dbStatus = error ? 'disconnected' : 'connected';
+    
+    // Calculate uptime (approximation)
+    const uptime = process.uptime();
+    
+    const healthInfo = {
+      status: 'healthy',
+      timestamp: timestamp,
+      service: 'Quiz App Webhook Mayar',
+      version: '2.0.0',
+      framework: 'Next.js',
+      environment: process.env.NODE_ENV || 'production',
+      
+      // System info
+      system: {
+        uptime: `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`,
+        memory: process.memoryUsage(),
+        node_version: process.version
+      },
+      
+      // Service status
+      services: {
+        webhook_endpoint: 'active',
+        database: dbStatus,
+        supabase: dbStatus
+      },
+      
+      // Configuration check
+      config: {
+        supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL ? 'configured' : 'missing',
+        service_key: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'missing',
+        mayar_api_key: process.env.MAYAR_API_KEY ? 'configured' : 'missing',
+        webhook_token: process.env.MAYAR_WEBHOOK_TOKEN ? 'configured' : 'missing'
+      },
+      
+      // Endpoints
+      endpoints: {
+        webhook: '/api/webhook',
+        health: '/api/health',
+        methods: ['GET', 'POST']
       }
+    };
 
-      await supabase.from('webhook_logs').insert({
-        order_id,
-        status,
-        webhook_data: webhookData,
-        processed_at: new Date().toISOString(),
-        success: true,
-      });
-
-      return res.status(200).json({ statusCode: 200, messages: 'success' });
-    } catch (error) {
-      await supabase.from('webhook_logs').insert({
-        order_id: order_id || 'unknown',
-        status: status || 'error',
-        webhook_data: webhookData,
-        processed_at: new Date().toISOString(),
-        success: false,
-        error_message: error.message,
-      });
-
-      return res.status(500).json({ statusCode: 500, messages: 'Internal server error' });
-    }
+    console.log(`💚 [${timestamp}] Health check - Status: healthy`);
+    
+    return res.status(200).json(healthInfo);
+    
+  } catch (error) {
+    console.error(`❤️ [${timestamp}] Health check failed:`, error);
+    
+    return res.status(503).json({
+      status: 'unhealthy',
+      timestamp: timestamp,
+      error: error.message,
+      service: 'Quiz App Webhook Mayar'
+    });
   }
-
-  return res.status(405).json({ statusCode: 405, messages: 'Method not allowed' });
 }
