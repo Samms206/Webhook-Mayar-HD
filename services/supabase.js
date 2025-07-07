@@ -1,3 +1,7 @@
+// ========================================
+// QUIZ APP - SUPABASE CLIENT (WEBHOOK-MAYAR)
+// Supabase client configuration untuk webhook server
+// ========================================
 
 import { createClient } from '@supabase/supabase-js';
 

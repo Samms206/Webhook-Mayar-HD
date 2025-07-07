@@ -1,4 +1,9 @@
-import { createPaymentSession } from '../../services/payment';
+// ========================================
+// QUIZ APP - CREATE PAYMENT SESSION API (WEBHOOK-MAYAR)
+// Next.js API route untuk membuat payment session
+// ========================================
+
+import { createPaymentSession } from '../../services/payment.js';
 import Cors from 'cors';
 
 // Initialize CORS middleware

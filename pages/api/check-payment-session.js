@@ -1,3 +1,8 @@
+// ========================================
+// QUIZ APP - CHECK PAYMENT SESSION API (WEBHOOK-MAYAR)
+// Next.js API route untuk mengecek status payment session
+// ========================================
+
 import { checkPaymentSession } from '../../services/payment.js';
 import Cors from 'cors';
 
