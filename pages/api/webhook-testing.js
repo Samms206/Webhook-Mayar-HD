@@ -69,27 +69,29 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
 
-  // Validasi signature (sementara dikomentari untuk debugging)
-  const signature = req.headers["x-signature"];
+  // Validasi signature - Mayar menggunakan x-callback-token
+  const signature = req.headers["x-callback-token"] || req.headers["x-signature"];
   logWithTimestamp("🔐 Signature check", {
     receivedSignature: signature,
     expectedSignature: MAYAR_SIGNATURE_TOKEN,
     signatureMatch: signature === MAYAR_SIGNATURE_TOKEN,
+    xCallbackToken: req.headers["x-callback-token"],
+    xSignature: req.headers["x-signature"],
   });
 
-  // Uncomment untuk mengaktifkan validasi signature
-  // if (!signature) {
-  //   logWithTimestamp("⚠️ No x-signature header received");
-  //   return res.status(403).json({ error: "Missing x-signature header" });
-  // }
+  // Aktifkan validasi signature
+  if (!signature) {
+    logWithTimestamp("⚠️ No signature header received (checked both x-callback-token and x-signature)");
+    return res.status(403).json({ error: "Missing signature header" });
+  }
 
-  // if (signature !== MAYAR_SIGNATURE_TOKEN) {
-  //   logWithTimestamp("❌ Signature mismatch!", {
-  //     received: signature,
-  //     expected: MAYAR_SIGNATURE_TOKEN,
-  //   });
-  //   return res.status(403).json({ error: "Invalid signature" });
-  // }
+  if (signature !== MAYAR_SIGNATURE_TOKEN) {
+    logWithTimestamp("❌ Signature mismatch!", {
+      received: signature,
+      expected: MAYAR_SIGNATURE_TOKEN,
+    });
+    return res.status(403).json({ error: "Invalid signature" });
+  }
 
   // Validasi body request
   if (!req.body) {
