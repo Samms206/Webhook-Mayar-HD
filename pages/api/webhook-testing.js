@@ -46,18 +46,18 @@ export default async function handler(req, res) {
   }
 
   const signature = req.headers["x-signature"];
-  if (!signature) {
-    console.warn("⚠️ No x-signature header received");
-    return res.status(403).json({ error: "Missing x-signature header" });
-  }
+//   if (!signature) {
+//     console.warn("⚠️ No x-signature header received");
+//     return res.status(403).json({ error: "Missing x-signature header" });
+//   }
 
-  if (signature !== MAYAR_SIGNATURE_TOKEN) {
-    console.warn("❌ Signature mismatch!", {
-      received: signature,
-      expected: MAYAR_SIGNATURE_TOKEN,
-    });
-    return res.status(403).json({ error: "Invalid signature" });
-  }
+//   if (signature !== MAYAR_SIGNATURE_TOKEN) {
+//     console.warn("❌ Signature mismatch!", {
+//       received: signature,
+//       expected: MAYAR_SIGNATURE_TOKEN,
+//     });
+//     return res.status(403).json({ error: "Invalid signature" });
+//   }
 
   const { event, data } = req.body;
 
